@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     s3_bucket: str
     s3_region: str
 
+    gemini_api_key: str
+
     model_config = SettingsConfigDict(env_file=".env")
 
 
