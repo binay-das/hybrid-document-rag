@@ -16,7 +16,9 @@ from app.schemas.document import (
     PageResponse,
 )
 from app.services.chunker import ChunkingService
+from app.services.embedding import EmbeddingService
 from app.services.pdf import PDFParserService
+from app.services.qdrant import QdrantService
 from app.services.storage import StorageService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -88,7 +90,7 @@ async def upload_document(
         db.commit()
         db.refresh(doc)
 
-        # Automatic recursive chunking on upload (default chunk_size=500, chunk_overlap=50)
+        # Automatic recursive chunking on upload
         pages_tuples = [(p.id, p.page_number, p.text) for p in doc.pages]
         chunk_results = ChunkingService.chunk_pages(pages_tuples, chunk_size=500, chunk_overlap=50)
         chunks = [
@@ -105,6 +107,15 @@ async def upload_document(
         db.add_all(chunks)
         db.commit()
         db.refresh(doc)
+
+        # Generate embeddings & store vectors in Qdrant
+        if doc.chunks:
+            embedding_service = EmbeddingService()
+            texts = [c.text for c in doc.chunks]
+            embeddings = embedding_service.embed_batch(texts)
+
+            qdrant_service = QdrantService()
+            qdrant_service.upsert_chunks(doc.chunks, embeddings)
 
         return doc
 
@@ -189,6 +200,9 @@ def rechunk_document(
             detail="chunk_overlap must be strictly less than chunk_size",
         )
 
+    qdrant_service = QdrantService()
+    qdrant_service.delete_chunks_by_document(doc.id)
+
     db.query(Chunk).filter(Chunk.document_id == document_id).delete(synchronize_session=False)
     db.commit()
 
@@ -214,6 +228,12 @@ def rechunk_document(
     db.commit()
     db.refresh(doc)
 
+    if doc.chunks:
+        embedding_service = EmbeddingService()
+        texts = [c.text for c in doc.chunks]
+        embeddings = embedding_service.embed_batch(texts)
+        qdrant_service.upsert_chunks(doc.chunks, embeddings)
+
     return ChunkingSummaryResponse(
         document_id=doc.id,
         total_chunks=len(doc.chunks),
@@ -234,6 +254,9 @@ def delete_document(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found",
         )
+
+    qdrant_service = QdrantService()
+    qdrant_service.delete_chunks_by_document(doc.id)
 
     storage = StorageService()
     storage.delete_file(doc.storage_key)
