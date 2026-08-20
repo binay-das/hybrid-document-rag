@@ -13,6 +13,32 @@ class PageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ChunkResponse(BaseModel):
+    id: int
+    document_id: int
+    page_id: int | None = None
+    chunk_index: int
+    page_number: int
+    text: str
+    char_count: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChunkingRequest(BaseModel):
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+
+
+class ChunkingSummaryResponse(BaseModel):
+    document_id: int
+    total_chunks: int
+    chunk_size: int
+    chunk_overlap: int
+    chunks: list[ChunkResponse]
+
+
 class DocumentResponse(BaseModel):
     id: int
     filename: str
@@ -33,5 +59,6 @@ class DocumentResponse(BaseModel):
 
 class DocumentDetailResponse(DocumentResponse):
     pages: list[PageResponse] = []
+    chunks: list[ChunkResponse] = []
 
     model_config = ConfigDict(from_attributes=True)

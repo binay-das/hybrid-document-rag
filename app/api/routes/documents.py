@@ -6,8 +6,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.document import Document, DocumentStatus, Page
-from app.schemas.document import DocumentDetailResponse, DocumentResponse, PageResponse
+from app.models.document import Chunk, Document, DocumentStatus, Page
+from app.schemas.document import (
+    ChunkingRequest,
+    ChunkingSummaryResponse,
+    ChunkResponse,
+    DocumentDetailResponse,
+    DocumentResponse,
+    PageResponse,
+)
+from app.services.chunker import ChunkingService
 from app.services.pdf import PDFParserService
 from app.services.storage import StorageService
 
@@ -79,6 +87,25 @@ async def upload_document(
         db.add_all(pages)
         db.commit()
         db.refresh(doc)
+
+        # Automatic recursive chunking on upload (default chunk_size=500, chunk_overlap=50)
+        pages_tuples = [(p.id, p.page_number, p.text) for p in doc.pages]
+        chunk_results = ChunkingService.chunk_pages(pages_tuples, chunk_size=500, chunk_overlap=50)
+        chunks = [
+            Chunk(
+                document_id=doc.id,
+                page_id=c.page_id,
+                chunk_index=c.chunk_index,
+                page_number=c.page_number,
+                text=c.text,
+                char_count=c.char_count,
+            )
+            for c in chunk_results
+        ]
+        db.add_all(chunks)
+        db.commit()
+        db.refresh(doc)
+
         return doc
 
     except Exception as e:
@@ -127,6 +154,73 @@ def get_document_pages(
             detail="Document not found",
         )
     return doc.pages
+
+
+@router.get("/{document_id}/chunks", response_model=List[ChunkResponse])
+def get_document_chunks(
+    document_id: int,
+    db: Session = Depends(get_db),
+):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+    return doc.chunks
+
+
+@router.post("/{document_id}/chunk", response_model=ChunkingSummaryResponse)
+def rechunk_document(
+    document_id: int,
+    request: ChunkingRequest = ChunkingRequest(),
+    db: Session = Depends(get_db),
+):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    if request.chunk_overlap >= request.chunk_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="chunk_overlap must be strictly less than chunk_size",
+        )
+
+    db.query(Chunk).filter(Chunk.document_id == document_id).delete(synchronize_session=False)
+    db.commit()
+
+    pages_tuples = [(p.id, p.page_number, p.text) for p in doc.pages]
+    chunk_results = ChunkingService.chunk_pages(
+        pages_tuples,
+        chunk_size=request.chunk_size,
+        chunk_overlap=request.chunk_overlap,
+    )
+
+    new_chunks = [
+        Chunk(
+            document_id=doc.id,
+            page_id=c.page_id,
+            chunk_index=c.chunk_index,
+            page_number=c.page_number,
+            text=c.text,
+            char_count=c.char_count,
+        )
+        for c in chunk_results
+    ]
+    db.add_all(new_chunks)
+    db.commit()
+    db.refresh(doc)
+
+    return ChunkingSummaryResponse(
+        document_id=doc.id,
+        total_chunks=len(doc.chunks),
+        chunk_size=request.chunk_size,
+        chunk_overlap=request.chunk_overlap,
+        chunks=doc.chunks,
+    )
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
