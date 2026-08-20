@@ -39,3 +39,12 @@ class StorageService:
             Bucket=self.bucket,
             Key=key,
         )["Body"]
+
+    def delete_file(self, key: str):
+        try:
+            self.client.delete_object(
+                Bucket=self.bucket,
+                Key=key,
+            )
+        except ClientError as e:
+            logger.error(f"Failed to delete file {key} from storage: {e}")
