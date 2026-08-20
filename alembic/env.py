@@ -17,7 +17,7 @@ if config.config_file_name is not None:
 
 
 from app.core.database import Base
-from app.models.document import Document, Page
+from app.models.document import Chunk, Document, Page
 
 target_metadata = Base.metadata
 

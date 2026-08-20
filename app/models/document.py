@@ -61,6 +61,11 @@ class Document(Base):
         cascade="all, delete-orphan",
     )
 
+    chunks: Mapped[list["Chunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
+
 
 class Page(Base):
     __tablename__ = "pages"
@@ -81,4 +86,40 @@ class Page(Base):
 
     document: Mapped["Document"] = relationship(
         back_populates="pages"
+    )
+
+    chunks: Mapped[list["Chunk"]] = relationship(
+        back_populates="page",
+        cascade="all, delete-orphan",
+    )
+
+
+class Chunk(Base):
+    __tablename__ = "chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE")
+    )
+    page_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pages.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    page_number: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    char_count: Mapped[int] = mapped_column(Integer)
+
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    document: Mapped["Document"] = relationship(
+        back_populates="chunks"
+    )
+    page: Mapped["Page"] = relationship(
+        back_populates="chunks"
     )
