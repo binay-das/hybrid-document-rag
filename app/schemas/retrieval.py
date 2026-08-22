@@ -18,6 +18,8 @@ class SearchResultItem(BaseModel):
     char_count: int
     score: float
     cross_encoder_score: Optional[float] = None
+    is_primary: Optional[bool] = None
+
 
 
 
