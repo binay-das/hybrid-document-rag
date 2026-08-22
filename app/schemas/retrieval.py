@@ -136,3 +136,51 @@ class ComparativeEvaluationResponse(BaseModel):
     query_comparisons: List[ComparisonQueryResultSchema]
 
 
+class RerankSearchRequest(BaseModel):
+    query: str
+    top_k: int = Field(default=5, ge=1, le=100)
+    fetch_k: int = Field(default=20, ge=1, le=200)
+    rrf_k: int = Field(default=60, ge=1)
+    document_id: Optional[int] = None
+
+
+class RerankSearchResponse(BaseModel):
+    query: str
+    top_k: int
+    results: List[SearchResultItem]
+
+
+class RerankQueryComparisonSchema(BaseModel):
+    query: str
+    relevant_chunk_ids: List[int]
+    hybrid_retrieved_ids: List[int]
+    hybrid_mrr: float
+    hybrid_ndcg: float
+    reranked_retrieved_ids: List[int]
+    reranked_mrr: float
+    reranked_ndcg: float
+    reranked_top_chunks: List[SearchResultItem]
+
+
+class RerankEvaluationRequest(BaseModel):
+    top_k: int = Field(default=5, ge=1, le=100)
+    fetch_k: int = Field(default=20, ge=1, le=200)
+    rrf_k: int = Field(default=60, ge=1)
+    test_cases: List[DenseTestCaseSchema]
+
+
+class RerankEvaluationResponse(BaseModel):
+    total_queries: int
+    top_k: int
+    hybrid_mean_recall: float
+    hybrid_hit_rate: float
+    hybrid_mrr: float
+    hybrid_ndcg: float
+    reranked_mean_recall: float
+    reranked_hit_rate: float
+    reranked_mrr: float
+    reranked_ndcg: float
+    query_comparisons: List[RerankQueryComparisonSchema]
+
+
+

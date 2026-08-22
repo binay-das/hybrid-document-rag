@@ -11,6 +11,10 @@ from app.schemas.retrieval import (
     DenseSearchResponse,
     HybridSearchRequest,
     HybridSearchResponse,
+    RerankEvaluationRequest,
+    RerankEvaluationResponse,
+    RerankSearchRequest,
+    RerankSearchResponse,
     SparseEvaluationRequest,
     SparseEvaluationResponse,
     SparseSearchRequest,
@@ -21,8 +25,74 @@ from app.services.embedding import EmbeddingService
 from app.services.evaluation import DenseTestCase, EvaluationService, SparseTestCase
 from app.services.hybrid import HybridRetrievalService
 from app.services.qdrant import QdrantService
+from app.services.reranker import RerankerService
 
 router = APIRouter(prefix="/search", tags=["retrieval"])
+
+
+@router.post("/rerank", response_model=RerankSearchResponse)
+def cross_encoder_rerank_search(request: RerankSearchRequest, db: Session = Depends(get_db)):
+    if not request.query.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Query string cannot be empty",
+        )
+
+    hybrid_service = HybridRetrievalService()
+    hybrid_candidates = hybrid_service.search_hybrid(
+        db=db,
+        query=request.query,
+        top_k=request.fetch_k,
+        fetch_k=request.fetch_k,
+        rrf_k=request.rrf_k,
+        document_id=request.document_id,
+    )
+
+    reranker = RerankerService()
+    reranked_results = reranker.rerank(
+        query=request.query,
+        candidates=hybrid_candidates,
+        top_k=request.top_k,
+    )
+
+    return RerankSearchResponse(
+        query=request.query,
+        top_k=request.top_k,
+        results=reranked_results,
+    )
+
+
+@router.post("/rerank/evaluate", response_model=RerankEvaluationResponse)
+def evaluate_reranked_retrieval(
+    request: RerankEvaluationRequest,
+    db: Session = Depends(get_db),
+):
+    if not request.test_cases:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="test_cases list cannot be empty",
+        )
+
+    test_cases = [
+        DenseTestCase(
+            query=tc.query,
+            relevant_chunk_ids=tc.relevant_chunk_ids,
+            document_id=tc.document_id,
+        )
+        for tc in request.test_cases
+    ]
+
+    eval_service = EvaluationService()
+    report = eval_service.evaluate_reranked_retrieval(
+        db=db,
+        test_cases=test_cases,
+        top_k=request.top_k,
+        fetch_k=request.fetch_k,
+        rrf_k=request.rrf_k,
+    )
+
+    return report
+
 
 
 @router.post("/hybrid", response_model=HybridSearchResponse)
