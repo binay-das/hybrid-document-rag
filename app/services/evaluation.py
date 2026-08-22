@@ -41,7 +41,33 @@ class EvaluationReport:
     query_results: List[QueryEvalResult]
 
 
+import math
 from app.services.hybrid import HybridRetrievalService
+from app.services.reranker import RerankerService
+
+
+def compute_rr(retrieved_ids: List[int], gt_set: set) -> float:
+    """Computes Reciprocal Rank (RR)."""
+    for rank_idx, chunk_id in enumerate(retrieved_ids, start=1):
+        if chunk_id in gt_set:
+            return 1.0 / rank_idx
+    return 0.0
+
+
+def compute_ndcg(retrieved_ids: List[int], gt_set: set, k: int) -> float:
+    """Computes Normalized Discounted Cumulative Gain (NDCG@K)."""
+    if not gt_set:
+        return 0.0
+
+    dcg = 0.0
+    for idx, chunk_id in enumerate(retrieved_ids[:k], start=1):
+        if chunk_id in gt_set:
+            dcg += 1.0 / math.log2(idx + 1)
+
+    idcg = sum(1.0 / math.log2(i + 1) for i in range(1, min(k, len(gt_set)) + 1))
+    if idcg == 0.0:
+        return 0.0
+    return dcg / idcg
 
 
 @dataclass
@@ -72,10 +98,39 @@ class ComparativeEvaluationReport:
     query_comparisons: List[ComparisonQueryResult]
 
 
+@dataclass
+class RerankQueryComparisonResult:
+    query: str
+    relevant_chunk_ids: List[int]
+    hybrid_retrieved_ids: List[int]
+    hybrid_mrr: float
+    hybrid_ndcg: float
+    reranked_retrieved_ids: List[int]
+    reranked_mrr: float
+    reranked_ndcg: float
+    reranked_top_chunks: List[Dict[str, Any]]
+
+
+@dataclass
+class RerankEvaluationReport:
+    total_queries: int
+    top_k: int
+    hybrid_mean_recall: float
+    hybrid_hit_rate: float
+    hybrid_mrr: float
+    hybrid_ndcg: float
+    reranked_mean_recall: float
+    reranked_hit_rate: float
+    reranked_mrr: float
+    reranked_ndcg: float
+    query_comparisons: List[RerankQueryComparisonResult]
+
+
 class EvaluationService:
     def __init__(self):
         self.embedding_service = EmbeddingService()
         self.qdrant_service = QdrantService()
+        self.reranker_service = RerankerService()
 
     def evaluate_dense_retrieval(
         self,
@@ -294,5 +349,109 @@ class EvaluationService:
             hybrid_hit_rate=round(sum(hybrid_hits) / total, 4),
             query_comparisons=comparisons,
         )
+
+    def evaluate_reranked_retrieval(
+        self,
+        db: Session,
+        test_cases: List[DenseTestCase],
+        top_k: int = 5,
+        fetch_k: int = 20,
+        rrf_k: int = 60,
+    ) -> RerankEvaluationReport:
+        if not test_cases:
+            return RerankEvaluationReport(
+                total_queries=0,
+                top_k=top_k,
+                hybrid_mean_recall=0.0,
+                hybrid_hit_rate=0.0,
+                hybrid_mrr=0.0,
+                hybrid_ndcg=0.0,
+                reranked_mean_recall=0.0,
+                reranked_hit_rate=0.0,
+                reranked_mrr=0.0,
+                reranked_ndcg=0.0,
+                query_comparisons=[],
+            )
+
+        hybrid_service = HybridRetrievalService()
+
+        comparisons: List[RerankQueryComparisonResult] = []
+        hybrid_recalls, hybrid_hits, hybrid_mrrs, hybrid_ndcgs = [], [], [], []
+        rerank_recalls, rerank_hits, rerank_mrrs, rerank_ndcgs = [], [], [], []
+
+        for tc in test_cases:
+            gt_set = set(tc.relevant_chunk_ids)
+
+            # Fetch candidate pool via Hybrid RRF Search
+            hybrid_candidates = hybrid_service.search_hybrid(
+                db=db,
+                query=tc.query,
+                top_k=fetch_k,
+                fetch_k=fetch_k,
+                rrf_k=rrf_k,
+                document_id=tc.document_id,
+            )
+
+            # Before Reranking: Top-K Hybrid
+            h_top_k = hybrid_candidates[:top_k]
+            h_ids = [r["chunk_id"] for r in h_top_k]
+            h_inter = set(h_ids).intersection(gt_set)
+            h_recall = len(h_inter) / len(gt_set) if gt_set else 0.0
+            h_hit = 1.0 if len(h_inter) > 0 else 0.0
+            h_mrr = compute_rr(h_ids, gt_set)
+            h_ndcg = compute_ndcg(h_ids, gt_set, top_k)
+
+            hybrid_recalls.append(h_recall)
+            hybrid_hits.append(h_hit)
+            hybrid_mrrs.append(h_mrr)
+            hybrid_ndcgs.append(h_ndcg)
+
+            # Cross-Encoder Reranking: Top-K Reranked
+            reranked_chunks = self.reranker_service.rerank(
+                query=tc.query,
+                candidates=hybrid_candidates,
+                top_k=top_k,
+            )
+            r_ids = [r["chunk_id"] for r in reranked_chunks]
+            r_inter = set(r_ids).intersection(gt_set)
+            r_recall = len(r_inter) / len(gt_set) if gt_set else 0.0
+            r_hit = 1.0 if len(r_inter) > 0 else 0.0
+            r_mrr = compute_rr(r_ids, gt_set)
+            r_ndcg = compute_ndcg(r_ids, gt_set, top_k)
+
+            rerank_recalls.append(r_recall)
+            rerank_hits.append(r_hit)
+            rerank_mrrs.append(r_mrr)
+            rerank_ndcgs.append(r_ndcg)
+
+            comparisons.append(
+                RerankQueryComparisonResult(
+                    query=tc.query,
+                    relevant_chunk_ids=tc.relevant_chunk_ids,
+                    hybrid_retrieved_ids=h_ids,
+                    hybrid_mrr=round(h_mrr, 4),
+                    hybrid_ndcg=round(h_ndcg, 4),
+                    reranked_retrieved_ids=r_ids,
+                    reranked_mrr=round(r_mrr, 4),
+                    reranked_ndcg=round(r_ndcg, 4),
+                    reranked_top_chunks=reranked_chunks,
+                )
+            )
+
+        total = len(test_cases)
+        return RerankEvaluationReport(
+            total_queries=total,
+            top_k=top_k,
+            hybrid_mean_recall=round(sum(hybrid_recalls) / total, 4),
+            hybrid_hit_rate=round(sum(hybrid_hits) / total, 4),
+            hybrid_mrr=round(sum(hybrid_mrrs) / total, 4),
+            hybrid_ndcg=round(sum(hybrid_ndcgs) / total, 4),
+            reranked_mean_recall=round(sum(rerank_recalls) / total, 4),
+            reranked_hit_rate=round(sum(rerank_hits) / total, 4),
+            reranked_mrr=round(sum(rerank_mrrs) / total, 4),
+            reranked_ndcg=round(sum(rerank_ndcgs) / total, 4),
+            query_comparisons=comparisons,
+        )
+
 
 
