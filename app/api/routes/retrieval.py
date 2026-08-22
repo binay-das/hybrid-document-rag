@@ -3,10 +3,14 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.schemas.retrieval import (
+    ComparativeEvaluationRequest,
+    ComparativeEvaluationResponse,
     DenseEvaluationRequest,
     DenseEvaluationResponse,
     DenseSearchRequest,
     DenseSearchResponse,
+    HybridSearchRequest,
+    HybridSearchResponse,
     SparseEvaluationRequest,
     SparseEvaluationResponse,
     SparseSearchRequest,
@@ -15,9 +19,69 @@ from app.schemas.retrieval import (
 from app.services.bm25 import BM25Service
 from app.services.embedding import EmbeddingService
 from app.services.evaluation import DenseTestCase, EvaluationService, SparseTestCase
+from app.services.hybrid import HybridRetrievalService
 from app.services.qdrant import QdrantService
 
 router = APIRouter(prefix="/search", tags=["retrieval"])
+
+
+@router.post("/hybrid", response_model=HybridSearchResponse)
+def hybrid_rrf_search(request: HybridSearchRequest, db: Session = Depends(get_db)):
+    if not request.query.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Query string cannot be empty",
+        )
+
+    hybrid_service = HybridRetrievalService()
+    results = hybrid_service.search_hybrid(
+        db=db,
+        query=request.query,
+        top_k=request.top_k,
+        fetch_k=request.fetch_k,
+        rrf_k=request.rrf_k,
+        document_id=request.document_id,
+    )
+
+    return HybridSearchResponse(
+        query=request.query,
+        top_k=request.top_k,
+        rrf_k=request.rrf_k,
+        results=results,
+    )
+
+
+@router.post("/compare", response_model=ComparativeEvaluationResponse)
+def compare_retrieval_methods(
+    request: ComparativeEvaluationRequest,
+    db: Session = Depends(get_db),
+):
+    if not request.test_cases:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="test_cases list cannot be empty",
+        )
+
+    test_cases = [
+        DenseTestCase(
+            query=tc.query,
+            relevant_chunk_ids=tc.relevant_chunk_ids,
+            document_id=tc.document_id,
+        )
+        for tc in request.test_cases
+    ]
+
+    eval_service = EvaluationService()
+    report = eval_service.evaluate_comparative_retrieval(
+        db=db,
+        test_cases=test_cases,
+        top_k=request.top_k,
+        fetch_k=request.fetch_k,
+        rrf_k=request.rrf_k,
+    )
+
+    return report
+
 
 
 @router.post("/dense", response_model=DenseSearchResponse)

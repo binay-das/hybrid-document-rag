@@ -87,3 +87,52 @@ class SparseEvaluationResponse(BaseModel):
     hit_rate_at_k: float
     query_results: List[QueryEvalResultSchema]
 
+
+class HybridSearchRequest(BaseModel):
+    query: str
+    top_k: int = Field(default=5, ge=1, le=100)
+    fetch_k: int = Field(default=20, ge=1, le=200)
+    rrf_k: int = Field(default=60, ge=1)
+    document_id: Optional[int] = None
+
+
+class HybridSearchResponse(BaseModel):
+    query: str
+    top_k: int
+    rrf_k: int
+    results: List[SearchResultItem]
+
+
+class ComparisonQueryResultSchema(BaseModel):
+    query: str
+    relevant_chunk_ids: List[int]
+    dense_retrieved_ids: List[int]
+    dense_recall: float
+    dense_hit: float
+    sparse_retrieved_ids: List[int]
+    sparse_recall: float
+    sparse_hit: float
+    hybrid_retrieved_ids: List[int]
+    hybrid_recall: float
+    hybrid_hit: float
+
+
+class ComparativeEvaluationRequest(BaseModel):
+    top_k: int = Field(default=5, ge=1, le=100)
+    fetch_k: int = Field(default=20, ge=1, le=200)
+    rrf_k: int = Field(default=60, ge=1)
+    test_cases: List[DenseTestCaseSchema]
+
+
+class ComparativeEvaluationResponse(BaseModel):
+    total_queries: int
+    top_k: int
+    dense_mean_recall: float
+    dense_hit_rate: float
+    sparse_mean_recall: float
+    sparse_hit_rate: float
+    hybrid_mean_recall: float
+    hybrid_hit_rate: float
+    query_comparisons: List[ComparisonQueryResultSchema]
+
+
