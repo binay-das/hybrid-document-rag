@@ -17,6 +17,8 @@ class SearchResultItem(BaseModel):
     text: str
     char_count: int
     score: float
+    cross_encoder_score: Optional[float] = None
+
 
 
 class DenseSearchResponse(BaseModel):
