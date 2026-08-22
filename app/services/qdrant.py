@@ -109,3 +109,55 @@ class QdrantService:
         except Exception as e:
             logger.error(f"Error counting vectors in Qdrant: {e}")
             return 0
+
+    def search_vectors(
+        self,
+        query_vector: List[float],
+        top_k: int = 5,
+        document_id: int | None = None,
+        collection_name: str = DEFAULT_COLLECTION_NAME,
+    ) -> List[Dict[str, Any]]:
+        try:
+            collections = self.client.get_collections().collections
+            exists = any(c.name == collection_name for c in collections)
+            if not exists:
+                return []
+
+            query_filter = None
+            if document_id is not None:
+                query_filter = Filter(
+                    must=[
+                        FieldCondition(
+                            key="document_id",
+                            match=MatchValue(value=document_id),
+                        )
+                    ]
+                )
+
+            res = self.client.query_points(
+                collection_name=collection_name,
+                query=query_vector,
+                query_filter=query_filter,
+                limit=top_k,
+            )
+
+            hits = res.points if hasattr(res, "points") else res
+            results = []
+            for hit in hits:
+                payload = hit.payload or {}
+                results.append({
+                    "chunk_id": payload.get("chunk_id", hit.id),
+                    "document_id": payload.get("document_id"),
+                    "page_id": payload.get("page_id"),
+                    "page_number": payload.get("page_number"),
+                    "chunk_index": payload.get("chunk_index"),
+                    "text": payload.get("text", ""),
+                    "char_count": payload.get("char_count", 0),
+                    "score": float(hit.score),
+                })
+            return results
+        except Exception as e:
+            logger.error(f"Error executing vector search in Qdrant: {e}")
+            return []
+
+
